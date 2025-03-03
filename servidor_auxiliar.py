@@ -10,15 +10,15 @@ class ServidorAuxiliar:
         self.host = host
         self.puerto = puerto
         self.contador_solicitudes = 0
-        # Estado de los servidores de operación
-        self.estado_servidores = {
-            'aritmetico': {'activo': False, 'ultima_verificacion': 0},
-            'avanzado': {'activo': False, 'ultima_verificacion': 0}
-        }
-        # Información de los servidores de operación
+        # Configuración para los servidores de operación
         self.servidores_operacion = {
             'aritmetico': {'host': 'localhost', 'puerto': 5001},
             'avanzado': {'host': 'localhost', 'puerto': 5002}
+        }
+        # Estado de los servidores
+        self.estado_servidores = {
+            'aritmetico': {'activo': False, 'ultima_verificacion': 0},
+            'avanzado': {'activo': False, 'ultima_verificacion': 0}
         }
         
     def iniciar(self):
@@ -79,8 +79,12 @@ class ServidorAuxiliar:
                 if activo != estado_anterior:
                     if activo:
                         print(f"\n✅ Servidor {tipo} está ACTIVO nuevamente")
+                        # Notificar al servidor de cálculo que el servidor original está activo nuevamente
+                        self.notificar_cambio_estado(servidor_calculo['host'], servidor_calculo['puerto'], tipo, True)
                     else:
                         print(f"\n❌ Servidor {tipo} está INACTIVO - Asumiendo sus funciones")
+                        # Notificar al servidor de cálculo que el servidor está inactivo y el auxiliar asumirá sus funciones
+                        self.notificar_cambio_estado(servidor_calculo['host'], servidor_calculo['puerto'], tipo, False)
             
             # Verificar servidor de cálculo
             activo_calculo = self.verificar_servidor(servidor_calculo['host'], servidor_calculo['puerto'])
@@ -97,6 +101,37 @@ class ServidorAuxiliar:
                 
             # Esperar antes de la próxima verificación
             time.sleep(5)
+
+    def notificar_cambio_estado(self, host, puerto, tipo_servidor, activo):
+        """Notifica al servidor de cálculo sobre un cambio en el estado de un servidor de operación."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(2)  # Timeout de 2 segundos
+                s.connect((host, puerto))
+                
+                # Crear mensaje de notificación
+                mensaje = {
+                    "operacion": "notificar_estado",
+                    "tipo_servidor": tipo_servidor,
+                    "activo": activo,
+                    "auxiliar_disponible": True,
+                    "timestamp": time.time()
+                }
+                
+                # Enviar notificación
+                s.sendall(json.dumps(mensaje).encode('utf-8'))
+                
+                # Intentar recibir confirmación (no es crítico)
+                try:
+                    s.recv(1024)
+                except socket.timeout:
+                    pass
+                    
+                print(f"Notificación enviada al servidor de cálculo: Servidor {tipo_servidor} {'ACTIVO' if activo else 'INACTIVO'}")
+                return True
+        except Exception as e:
+            print(f"Error al notificar cambio de estado: {str(e)}")
+            return False
 
 
     def verificar_servidor(self, host, puerto):
@@ -202,7 +237,7 @@ class ServidorAuxiliar:
                 cliente_socket.sendall(json.dumps(respuesta).encode('utf-8'))
                 self.mostrar_respuesta_enviada(id_solicitud, respuesta, "ERROR")
                 return
-                
+                    
             # Realizar cálculo
             tiempo_inicio = time.time()
             resultado = self.realizar_calculo(solicitud)
@@ -254,7 +289,7 @@ class ServidorAuxiliar:
             print("▶ Solicitud malformada")
             
         print("*" * ancho)
-    
+
     def mostrar_resultado_calculado(self, id_solicitud, resultado, tiempo_calculo):
         """Muestra el resultado calculado con formato."""
         ancho = 80
@@ -280,7 +315,7 @@ class ServidorAuxiliar:
                 print(f"  └ {resultado['operandos'][1]}√{resultado['operandos'][0]} = {resultado['resultado']:.6f}")
         
         print("*" * ancho)
-    
+
     def mostrar_respuesta_enviada(self, id_solicitud, respuesta, estado="OK"):
         """Muestra información sobre la respuesta enviada."""
         ancho = 80
@@ -297,12 +332,19 @@ class ServidorAuxiliar:
         """Valida que la solicitud tenga el formato correcto."""
         if not isinstance(solicitud, dict) or 'operacion' not in solicitud or 'operandos' not in solicitud:
             return False
-            
+                
         # Permitir mensajes de verificación de estado
         if solicitud['operacion'] == 'verificar_estado':
             return True
-            
-        return isinstance(solicitud['operandos'], list)
+                
+        # El servidor auxiliar acepta todos los tipos de operaciones
+        operaciones_aritmeticas = ['suma', 'resta', 'multiplicacion', 'division']
+        operaciones_avanzadas = ['potencia', 'raiz', 'logaritmo']
+        
+        if solicitud['operacion'] in operaciones_aritmeticas + operaciones_avanzadas:
+            return isinstance(solicitud['operandos'], list)
+        
+        return False
         
     def realizar_calculo(self, solicitud):
         """Realiza el cálculo solicitado (aritmético o avanzado)."""
@@ -315,7 +357,10 @@ class ServidorAuxiliar:
                 "tipo": "auxiliar"
             }
 
+        # Usar el tipo especificado en la solicitud o determinarlo automáticamente
         tipo = solicitud.get('tipo', self.determinar_tipo_operacion(operacion))
+        
+        print(f"Servidor auxiliar realizando cálculo: {operacion} (tipo: {tipo})")
         
         try:
             # Operaciones aritméticas
@@ -355,14 +400,15 @@ class ServidorAuxiliar:
             return {
                 "operacion": operacion,
                 "operandos": operandos,
-                "resultado": resultado
+                "resultado": resultado,
+                "servidor": "auxiliar"  # Indicar que el cálculo fue realizado por el servidor auxiliar
             }
             
         except IndexError:
             return {"error": "Número insuficiente de operandos"}
         except Exception as e:
             return {"error": f"Error en el cálculo: {str(e)}"}
-    
+        
     def determinar_tipo_operacion(self, operacion):
         """Determina el tipo de operación basado en su nombre."""
         if operacion in ['suma', 'resta', 'multiplicacion', 'division']:
