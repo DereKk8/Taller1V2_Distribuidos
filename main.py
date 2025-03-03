@@ -2,8 +2,8 @@ import argparse
 import sys
 
 def main():
-    parser = argparse.ArgumentParser(description='Sistema de Cálculo Distribuido')
-    parser.add_argument('componente', choices=['cliente', 'servidor_calculo', 'servidor_op1', 'servidor_op2'],
+    parser = argparse.ArgumentParser(description='Sistema de Cálculo Distribuido con Tolerancia a Fallos')
+    parser.add_argument('componente', choices=['cliente', 'servidor_calculo', 'servidor_op1', 'servidor_op2', 'servidor_auxiliar'],
                        help='Componente a ejecutar')
     args = parser.parse_args()
     
@@ -15,6 +15,8 @@ def main():
         ejecutar_servidor_operacion1()
     elif args.componente == 'servidor_op2':
         ejecutar_servidor_operacion2()
+    elif args.componente == 'servidor_auxiliar':
+        ejecutar_servidor_auxiliar()
     else:
         print("Componente no reconocido")
         sys.exit(1)
@@ -62,6 +64,13 @@ def ejecutar_servidor_calculo():
     print("Iniciando servidor de cálculo...")
     servidor.iniciar()
 
+def ejecutar_servidor_auxiliar():
+    from servidor_auxiliar import ServidorAuxiliar
+    
+    servidor = ServidorAuxiliar()
+    print("Iniciando servidor auxiliar con tolerancia a fallos...")
+    servidor.iniciar()
+
 def ejecutar_servidor_operacion1():
     # Ahora importamos directamente del archivo específico
     from servidor_operacion1 import ServidorOperacionAritmetico
@@ -90,6 +99,9 @@ if __name__ == "__main__":
 #
 # Para iniciar el servidor de operaciones avanzadas:
 # python main.py servidor_op2
+#
+# Para iniciar el servidor auxiliar:
+# python main.py servidor_auxiliar
 #
 # Para iniciar el cliente:
 # python main.py cliente

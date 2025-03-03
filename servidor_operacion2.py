@@ -68,6 +68,15 @@ class ServidorOperacionAvanzado:
             datos = cliente_socket.recv(4096).decode('utf-8')
             solicitud = json.loads(datos)
             
+            # Verificar si es una solicitud de verificación de estado
+            if 'operacion' in solicitud and solicitud['operacion'] == 'verificar_estado':
+                respuesta = {
+                    "estado": "activo",
+                    "tipo": "avanzado"
+                }
+                cliente_socket.sendall(json.dumps(respuesta).encode('utf-8'))
+                return
+            
             # Mostrar información de la solicitud recibida
             self.mostrar_solicitud_recibida(id_solicitud, hora_recepcion, direccion, solicitud)
             
@@ -173,6 +182,10 @@ class ServidorOperacionAvanzado:
         if not isinstance(solicitud, dict) or 'operacion' not in solicitud or 'operandos' not in solicitud:
             return False
             
+        # Permitir mensajes de verificación de estado
+        if solicitud['operacion'] == 'verificar_estado':
+            return True
+            
         # Validar que el tipo de operación corresponda a este servidor (avanzadas)
         return solicitud['operacion'] in ['potencia', 'raiz', 'logaritmo']
         
@@ -180,6 +193,12 @@ class ServidorOperacionAvanzado:
         """Realiza el cálculo avanzado solicitado."""
         operacion = solicitud['operacion']
         operandos = solicitud['operandos']
+
+        if operacion == 'verificar_estado':
+            return {
+                "estado": "activo",
+                "tipo": "avanzado"
+            }
         
         try:
             if operacion == 'potencia':
