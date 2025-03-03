@@ -17,7 +17,7 @@ class ServidorCalculo:
         self.estado_servidores = {
             'aritmetico': {'activo': False, 'ultima_verificacion': 0},
             'avanzado': {'activo': False, 'ultima_verificacion': 0},
-            'auxiliar': {'activo': False, 'ultima_verificacion': 0}
+            'auxiliar': {'activo': False, 'ultima_verificacion': 0}  # Añadir estado para el servidor auxiliar
         }
 
     def iniciar(self):
@@ -105,6 +105,43 @@ class ServidorCalculo:
                 return True
         except:
             return False
+        
+    def verificar_servidores(self):
+        """Verifica periódicamente el estado de los servidores de operación."""
+        while True:
+            for servidor in self.servidores_operacion:
+                tipo = servidor['tipo']
+                activo = self.verificar_servidor(servidor['host'], servidor['puerto'])
+                estado_anterior = self.estado_servidores[tipo]['activo']
+                self.estado_servidores[tipo]['activo'] = activo
+                self.estado_servidores[tipo]['ultima_verificacion'] = time.time()
+                
+                # Notificar cambios de estado
+                if activo != estado_anterior:
+                    if activo:
+                        print(f"\n✅ Servidor {tipo} está ACTIVO")
+                    else:
+                        print(f"\n❌ Servidor {tipo} está INACTIVO")
+                        
+                        # Si un servidor principal falla, verificar que el auxiliar esté activo
+                        if tipo in ['aritmetico', 'avanzado'] and not activo:
+                            auxiliar_activo = False
+                            for s in self.servidores_operacion:
+                                if s['tipo'] == 'auxiliar':
+                                    auxiliar_activo = self.verificar_servidor(s['host'], s['puerto'])
+                                    self.estado_servidores['auxiliar']['activo'] = auxiliar_activo
+                                    break
+                                    
+                            if auxiliar_activo:
+                                print(f"✅ Servidor auxiliar disponible para reemplazar a {tipo}")
+                            else:
+                                print(f"❌ Servidor auxiliar NO disponible para reemplazar a {tipo}")
+            
+            # Mostrar estado actual
+            self.mostrar_estado_servidores()
+            
+            # Esperar antes de la próxima verificación
+            time.sleep(5)
 
     def mostrar_estado_servidores(self):
         """Muestra el estado actual de los servidores monitoreados."""
@@ -128,6 +165,13 @@ class ServidorCalculo:
                     "estado": "activo",
                     "tipo": "calculo"
                 }
+                cliente_socket.sendall(json.dumps(respuesta).encode('utf-8'))
+                return
+                
+            # Verificar si es una notificación de cambio de estado
+            if 'operacion' in solicitud and solicitud['operacion'] == 'notificar_estado':
+                self.procesar_notificacion_estado(solicitud)
+                respuesta = {"estado": "recibido"}
                 cliente_socket.sendall(json.dumps(respuesta).encode('utf-8'))
                 return
             
@@ -170,19 +214,60 @@ class ServidorCalculo:
         finally:
             cliente_socket.close()
 
+    def procesar_notificacion_estado(self, notificacion):
+        """Procesa una notificación de cambio de estado de un servidor."""
+        tipo_servidor = notificacion['tipo_servidor']
+        activo = notificacion['activo']
+        
+        # Actualizar estado del servidor
+        self.estado_servidores[tipo_servidor]['activo'] = activo
+        self.estado_servidores[tipo_servidor]['ultima_verificacion'] = time.time()
+        
+        # Actualizar configuración de enrutamiento si es necesario
+        if not activo and notificacion.get('auxiliar_disponible', False):
+            print(f"\n⚠️ Servidor {tipo_servidor} está INACTIVO - Redirigiendo solicitudes al servidor auxiliar")
+            # Asegurarse de que el servidor auxiliar esté en la lista de servidores
+            servidor_auxiliar_encontrado = False
+            for servidor in self.servidores_operacion:
+                if servidor['tipo'] == 'auxiliar':
+                    servidor_auxiliar_encontrado = True
+                    break
+                    
+            if not servidor_auxiliar_encontrado:
+                self.servidores_operacion.append({
+                    'host': 'localhost',  # Ajustar según configuración
+                    'puerto': 5003,       # Ajustar según configuración
+                    'tipo': 'auxiliar'
+                })
+                
+            # Marcar el servidor auxiliar como activo
+            self.estado_servidores['auxiliar']['activo'] = True
+        elif activo:
+            print(f"\n✅ Servidor {tipo_servidor} está ACTIVO nuevamente - Restaurando enrutamiento normal")
+        
+        # Mostrar estado actual
+        self.mostrar_estado_servidores()
+
     def seleccionar_servidor(self, tipo_operacion):
         """Selecciona el servidor adecuado según el tipo de operación y disponibilidad."""
-        # Primero intentar con el servidor específico para el tipo de operación
-        for servidor in self.servidores_operacion:
-            if servidor['tipo'] == tipo_operacion and self.estado_servidores[tipo_operacion]['activo']:
-                return servidor
+        # Verificar si el servidor específico está activo
+        if self.estado_servidores[tipo_operacion]['activo']:
+            # Buscar el servidor específico
+            for servidor in self.servidores_operacion:
+                if servidor['tipo'] == tipo_operacion:
+                    return servidor
         
         # Si el servidor específico no está disponible, usar el servidor auxiliar
         if self.estado_servidores['auxiliar']['activo']:
+            # Buscar el servidor auxiliar
             for servidor in self.servidores_operacion:
                 if servidor['tipo'] == 'auxiliar':
-                    print(f"Usando servidor auxiliar para operación de tipo {tipo_operacion}")
-                    return servidor
+                    print(f"⚠️ Usando servidor auxiliar para operación de tipo {tipo_operacion}")
+                    # Crear una copia del servidor auxiliar pero con el tipo de operación correcto
+                    servidor_auxiliar = servidor.copy()
+                    servidor_auxiliar['tipo_original'] = 'auxiliar'  # Guardar tipo original
+                    servidor_auxiliar['tipo'] = tipo_operacion  # Cambiar tipo para que el auxiliar sepa qué operación realizar
+                    return servidor_auxiliar
         
         # Si ningún servidor está disponible, lanzar excepción
         raise ValueError(f"No hay servidores disponibles para operaciones de tipo: {tipo_operacion}")
@@ -223,28 +308,80 @@ class ServidorCalculo:
         raise ValueError(f"No hay servidor disponible para operaciones de tipo: {tipo_operacion}")
         
     def enviar_a_servidor_operacion(self, subtarea, servidor_destino):
-        """Envía una subtarea al servidor de operación correspondiente."""
+        """Envía una subtarea a un servidor de operación y recibe el resultado."""
         try:
-            # Crear socket
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # Conectar al servidor de operación
+                s.settimeout(5)  # Timeout de 5 segundos
                 s.connect((servidor_destino['host'], servidor_destino['puerto']))
+                
+                # Si estamos usando el servidor auxiliar, asegurarse de que sepa qué tipo de operación realizar
+                if 'tipo_original' in servidor_destino and servidor_destino['tipo_original'] == 'auxiliar':
+                    subtarea['tipo'] = servidor_destino['tipo']  # Añadir el tipo de operación a la subtarea
                 
                 # Enviar subtarea
                 s.sendall(json.dumps(subtarea).encode('utf-8'))
                 
-                # Recibir respuesta
-                respuesta = s.recv(4096).decode('utf-8')
-                return json.loads(respuesta)
+                # Recibir resultado
+                resultado_data = s.recv(4096)
+                resultado = json.loads(resultado_data.decode('utf-8'))
                 
-        except ConnectionRefusedError:
-            error_msg = f"No se pudo conectar con el servidor de operación ({servidor_destino['tipo']})."
-            print(error_msg)
-            return {"error": error_msg}
+                # Verificar si hay error
+                if 'error' in resultado:
+                    print(f"Error en servidor {servidor_destino['tipo']}: {resultado['error']}")
+                    raise Exception(resultado['error'])
+                    
+                return resultado
         except Exception as e:
-            error_msg = f"Error al comunicarse con servidor de operación: {str(e)}"
-            print(error_msg)
-            return {"error": error_msg}
+            print(f"Error al comunicarse con servidor {servidor_destino['tipo']}: {str(e)}")
+            # Marcar el servidor como inactivo
+            self.estado_servidores[servidor_destino['tipo']]['activo'] = False
+            # Intentar con el servidor auxiliar si no estábamos ya usándolo
+            if 'tipo_original' not in servidor_destino or servidor_destino['tipo_original'] != 'auxiliar':
+                print(f"Intentando con servidor auxiliar para operación {subtarea['operacion']}")
+                return self.reenviar_a_servidor_auxiliar(subtarea)
+            else:
+                raise Exception(f"No se pudo completar la operación: {str(e)}")
+
+    def reenviar_a_servidor_auxiliar(self, subtarea):
+        """Reenvía una subtarea al servidor auxiliar cuando el servidor original falla."""
+        # Buscar el servidor auxiliar
+        servidor_auxiliar = None
+        for servidor in self.servidores_operacion:
+            if servidor['tipo'] == 'auxiliar':
+                servidor_auxiliar = servidor
+                break
+        
+        if not servidor_auxiliar or not self.estado_servidores['auxiliar']['activo']:
+            raise Exception("Servidor auxiliar no disponible")
+        
+        # Añadir el tipo de operación a la subtarea
+        subtarea['tipo'] = subtarea.get('tipo', self.determinar_tipo_operacion(subtarea['operacion']))
+        
+        # Enviar al servidor auxiliar
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                s.connect((servidor_auxiliar['host'], servidor_auxiliar['puerto']))
+                s.sendall(json.dumps(subtarea).encode('utf-8'))
+                resultado_data = s.recv(4096)
+                resultado = json.loads(resultado_data.decode('utf-8'))
+                
+                if 'error' in resultado:
+                    raise Exception(resultado['error'])
+                    
+                return resultado
+        except Exception as e:
+            self.estado_servidores['auxiliar']['activo'] = False
+            raise Exception(f"Error al comunicarse con servidor auxiliar: {str(e)}")
+
+    def determinar_tipo_operacion(self, operacion):
+        """Determina el tipo de operación basado en su nombre."""
+        if operacion in ['suma', 'resta', 'multiplicacion', 'division']:
+            return 'aritmetico'
+        elif operacion in ['potencia', 'raiz', 'logaritmo']:
+            return 'avanzado'
+        else:
+            return 'desconocido'
             
     def ensamblar_resultado(self, resultados_parciales, solicitud_original):
         """Ensambla el resultado final a partir de los resultados parciales."""
