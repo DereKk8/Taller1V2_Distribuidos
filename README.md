@@ -209,7 +209,129 @@ Los servidores utilizan las siguientes configuraciones por defecto:
 - Servidor de Cálculo: `localhost:5000`
 - Servidor Aritmético: `localhost:5001`
 - Servidor Avanzado: `localhost:5002`
+- Servidor Auxiliar: `localhost:5003`
 
 Para modificar estas configuraciones, puedes editar los parámetros en los respectivos archivos de servidor.
+
+## Configuración para Entorno Distribuido
+
+Para ejecutar el sistema en múltiples computadoras, es necesario realizar cambios en las configuraciones de red de cada componente.
+
+### 1. Preparación de la Red
+
+- Asegúrate de que todas las máquinas estén en la misma red y puedan comunicarse entre sí
+- Verifica que los puertos utilizados (5000, 5001, 5002, 5003) estén abiertos en los firewalls de todas las máquinas
+- Identifica las direcciones IP de cada máquina donde se ejecutará un componente del sistema
+
+### 2. Distribución de Componentes
+
+Decide qué componente se ejecutará en cada máquina:
+- Máquina A: Servidor de Cálculo (puerto 5000)
+- Máquina B: Servidor de Operaciones Aritméticas (puerto 5001)
+- Máquina C: Servidor de Operaciones Avanzadas (puerto 5002)
+- Máquina D: Servidor Auxiliar (puerto 5003)
+- Máquina E: Cliente
+
+### 3. Cambios Específicos para Cada Componente
+
+#### Para el Servidor de Cálculo (`servidor_calculo.py`)
+- Modifica el parámetro `host` en el constructor `__init__`:
+  ```python
+  def __init__(self, host='0.0.0.0', puerto_escucha=5000):
+      self.host = host
+      self.puerto_escucha = puerto_escucha
+  ```
+
+- Actualiza las direcciones en `self.servidores_operacion` con las IPs reales de las máquinas:
+  ```python
+  self.servidores_operacion = [
+      {'host': '192.168.1.B', 'puerto': 5001, 'tipo': 'aritmetico'},
+      {'host': '192.168.1.C', 'puerto': 5002, 'tipo': 'avanzado'},
+      {'host': '192.168.1.D', 'puerto': 5003, 'tipo': 'auxiliar'}
+  ]
+  ```
+
+#### Para el Servidor de Operaciones Aritméticas (`servidor_operacion1.py`)
+- Modifica el parámetro `host` en el constructor `__init__`:
+  ```python
+  def __init__(self, host='0.0.0.0', puerto=5001):
+      self.host = host
+      self.puerto = puerto
+  ```
+
+#### Para el Servidor de Operaciones Avanzadas (`servidor_operacion2.py`)
+- Modifica el parámetro `host` en el constructor `__init__`:
+  ```python
+  def __init__(self, host='0.0.0.0', puerto=5002):
+      self.host = host
+      self.puerto = puerto
+  ```
+
+#### Para el Servidor Auxiliar (`servidor_auxiliar.py`)
+- Modifica el parámetro `host` en el constructor `__init__`:
+  ```python
+  def __init__(self, host='0.0.0.0', puerto=5003):
+      self.host = host
+      self.puerto = puerto
+      self.contador_solicitudes = 0
+  ```
+
+- Actualiza las direcciones en `self.servidores_operacion` con las IPs reales:
+  ```python
+  self.servidores_operacion = {
+      'aritmetico': {'host': '192.168.1.B', 'puerto': 5001},
+      'avanzado': {'host': '192.168.1.C', 'puerto': 5002}
+  }
+  ```
+
+- Actualiza la dirección del servidor de cálculo en la función `monitorear_servidores`:
+  ```python
+  servidor_calculo = {'host': '192.168.1.A', 'puerto': 5000}
+  ```
+
+#### Para el Cliente (`cliente.py`)
+- Modifica el parámetro `host` en el constructor `__init__` para que apunte al servidor de cálculo:
+  ```python
+  def __init__(self, host='192.168.1.A', puerto=5000):
+      self.host = host
+      self.puerto = puerto
+  ```
+
+### 4. Ejecución en Entorno Distribuido
+
+1. Copia los archivos necesarios a cada máquina o clona el repositorio en todas ellas
+2. En cada máquina, inicia el componente correspondiente:
+
+   - Máquina A (IP: 192.168.1.A):
+     ```
+     python main.py servidor_calculo
+     ```
+
+   - Máquina B (IP: 192.168.1.B):
+     ```
+     python main.py servidor_op1
+     ```
+
+   - Máquina C (IP: 192.168.1.C):
+     ```
+     python main.py servidor_op2
+     ```
+
+   - Máquina D (IP: 192.168.1.D):
+     ```
+     python main.py servidor_auxiliar
+     ```
+
+   - Máquina E (Cliente):
+     ```
+     python main.py cliente
+     ```
+
+### 5. Consideraciones Adicionales
+
+- Si ejecutas el servidor con `host='0.0.0.0'`, escuchará en todas las interfaces de red, lo que es útil para entornos distribuidos
+- Asegúrate de que la función `notificar_cambio_estado` el parametro `host` en el servidor auxiliar use la IP correcta del servidor de cálculo
+- Verifica que la función `reenviar_a_servidor_auxiliar` en el servidor de cálculo use la IP correcta del servidor auxiliar
+- Monitorea los logs de cada componente para detectar posibles problemas de conexión
 
 Link del proyecto: [[https://github.com/DereKk8/Taller1_Distribuidos](https://github.com/DereKk8/Taller1_Distribuidos.git)]
